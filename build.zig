@@ -5,11 +5,21 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const sdk = sdl.init(b, .{});
+    // const sdl_dep = b.dependency("SDL", .{
+    //     .optimize = .ReleaseFast,
+    //     .target = target,
+    // });
+
+    const sdl_mod = b.addModule("sdl", .{
+        .root_source_file = b.path("src/sdl.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const mod = b.addModule("chip_8", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .imports = &.{.{ .name = "sdl", .module = sdl_mod }},
     });
 
     const exe = b.addExecutable(.{
@@ -19,13 +29,22 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "chip_8", .module = mod },
+                .{ .name = "chip_8", .module = mod }, .{ .name = "sdl", .module = sdl_mod },
             },
         }),
     });
 
-    sdk.link(exe, .dynamic, sdl.Library.SDL2);
-    mod.addImport("sdl", sdk.getNativeModule());
+    if (target.result.os.tag == .linux) {
+        // SU LINUX: usa SDL2 di sistema, NON il pacchetto SDL.zig
+        exe.linkSystemLibrary("SDL2");
+        exe.linkLibC();
+    } else {
+        const sdl_dep = b.dependency("SDL", .{
+            .optimize = .ReleaseFast,
+            .target = target,
+        });
+        exe.linkLibrary(sdl_dep.artifact("SDL2"));
+    }
 
     b.installArtifact(exe);
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const chip_8 = @import("chip_8");
-const SDL = @import("sdl");
+const sdl = @import("sdl").c;
+const sdlPanic = @import("sdl").sdlPanic;
 
 pub fn main() !void {
     if (std.os.argv.len < 2) {
@@ -30,5 +31,20 @@ pub fn main() !void {
     }
 
     const romSlice = romContent[0..total];
-    try chip_8.run(romSlice);
+
+    if (sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_EVENTS | sdl.SDL_INIT_AUDIO) < 0)
+        sdlPanic();
+    defer sdl.SDL_Quit();
+
+    const window = sdl.SDL_CreateWindow(
+        "chip-8",
+        sdl.SDL_WINDOWPOS_CENTERED,
+        sdl.SDL_WINDOWPOS_CENTERED,
+        640,
+        320,
+        sdl.SDL_WINDOW_SHOWN,
+    ) orelse sdlPanic();
+    defer _ = sdl.SDL_DestroyWindow(window);
+
+    try chip_8.run(window, romSlice);
 }
