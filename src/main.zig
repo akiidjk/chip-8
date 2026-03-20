@@ -2,11 +2,23 @@ const std = @import("std");
 const chip_8 = @import("chip_8");
 const sdl = @import("sdl").c;
 const sdlPanic = @import("sdl").sdlPanic;
+const posix = std.posix;
+
+pub fn handleCtrlC(signum: i32) callconv(.c) void {
+    std.process.exit(0);
+    std.debug.print("\n[!] Caught Ctrl+C (signal {}), Shutting down...\n", .{signum});
+}
+
+fn setupSigint() void {
+    var sa = posix.Sigaction{
+        .handler = .{ .handler = handleCtrlC },
+        .mask = posix.sigemptyset(),
+        .flags = 0,
+    };
+    _ = posix.sigaction(posix.SIG.INT, &sa, null);
+}
 
 pub fn main() !void {
-    if (std.os.argv.len < 2) {
-        std.debug.print("You need to insert at least the rom to execute", .{});
-    }
     const allocator = std.heap.page_allocator;
 
     if (std.os.argv.len < 2) {
@@ -29,7 +41,6 @@ pub fn main() !void {
         if (n == 0) break;
         total += n;
     }
-
     const romSlice = romContent[0..total];
 
     if (sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_EVENTS | sdl.SDL_INIT_AUDIO) < 0)
@@ -46,5 +57,6 @@ pub fn main() !void {
     ) orelse sdlPanic();
     defer _ = sdl.SDL_DestroyWindow(window);
 
+    setupSigint();
     try chip_8.run(window, romSlice);
 }
