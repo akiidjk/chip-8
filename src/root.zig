@@ -132,7 +132,7 @@ pub fn run(window: *sdl.SDL_Window, rom: []u8) !void {
     // print_stack(chip8);
     chip8.running = true;
 
-    // var i: u32 = 0; //debug
+    var i: u32 = 0; //debug
 
     while (chip8.running) {
         var ev: sdl.SDL_Event = undefined;
@@ -140,10 +140,11 @@ pub fn run(window: *sdl.SDL_Window, rom: []u8) !void {
         printRegisters(chip8);
         decodeAndExec(&chip8);
 
-        // i += 1; // debug
-        // if (i == 300) { // debug
-        //     return;
-        // }
+        i += 1; // debug
+        i = 0;
+        if (i == 950) { // debug
+            return;
+        }
 
         if (chip8.draw) {
             _ = sdl.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xFF);
@@ -429,7 +430,7 @@ fn op7xkk(chip8: *Chip8) void {
         .{ index_register, value, chip8.v[index_register], chip8.pc },
     );
 
-    chip8.v[index_register], _ = @addWithOverflow(chip8.v[index_register], value);
+    chip8.v[index_register], chip8.v[0xF] = @addWithOverflow(chip8.v[index_register], value);
     chip8.pc += 2;
 
     std.debug.print("  -> done. New V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ index_register, chip8.v[index_register], chip8.pc });
@@ -499,9 +500,12 @@ fn op_8xy4(chip8: *Chip8) void {
         .{ x_reg, y_reg, chip8.v[x_reg], chip8.v[y_reg], chip8.pc },
     );
 
+    const X: u16 = @intCast(chip8.v[x_reg]);
+    const Y: u16 = @intCast(chip8.v[y_reg]);
+    chip8.v[0xF] = if (X + Y > 0xFF) 1 else 0;
     chip8.v[x_reg], _ = @addWithOverflow(chip8.v[x_reg], chip8.v[y_reg]);
-    chip8.pc += 2;
 
+    chip8.pc += 2;
     std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
 }
 fn op_8xy5(chip8: *Chip8) void {
@@ -509,13 +513,19 @@ fn op_8xy5(chip8: *Chip8) void {
     const y_reg = (chip8.opcode & 0x00F0) >> 4;
 
     std.debug.print(
-        "op_8xy5: V{d} -= V{d}  (V{d}=0x{x:0>3}, V{d}=0x{x:0>3})  PC=0x{x:0>3}\n",
-        .{ x_reg, y_reg, x_reg, chip8.v[x_reg], y_reg, chip8.v[y_reg], chip8.pc },
+        "op_8xy5: V{d} -= V{d}  (V{d}=0x{x:0>3}, V{d}=0x{x:0>3})\n",
+        .{ x_reg, y_reg, x_reg, chip8.v[x_reg], y_reg, chip8.v[y_reg] },
     );
 
-    chip8.v[x_reg], chip8.v[0xF] = @subWithOverflow(chip8.v[x_reg], chip8.v[y_reg]);
+    if (chip8.v[x_reg] > chip8.v[y_reg]) {
+        chip8.v[0xF] = 1;
+    } else {
+        chip8.v[0xF] = 1;
+    }
+    chip8.v[x_reg], _ = @subWithOverflow(chip8.v[x_reg], chip8.v[y_reg]);
+
     chip8.pc += 2;
-    std.debug.print("  PC now=0x{x:0>3}\n", .{chip8.pc});
+    std.debug.print("V{d} now=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg] });
 }
 fn op_8xy6(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
@@ -536,16 +546,22 @@ fn op_8xy7(chip8: *Chip8) void {
         .{ x_reg, y_reg, x_reg, x_reg, chip8.v[x_reg], y_reg, chip8.v[y_reg], chip8.pc },
     );
 
-    chip8.v[x_reg], chip8.v[0xF] = @subWithOverflow(chip8.v[y_reg], chip8.v[x_reg]);
+    if (chip8.v[x_reg] < chip8.v[y_reg]) {
+        chip8.v[0xF] = 1;
+    } else {
+        chip8.v[0xF] = 1;
+    }
+    chip8.v[x_reg], _ = @subWithOverflow(chip8.v[y_reg], chip8.v[x_reg]);
     chip8.pc += 2;
     std.debug.print("  PC now=0x{x:0>3}\n", .{chip8.pc});
 }
+
 fn op_8xye(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
 
     std.debug.print("op_8xye: V{d}=0x{x:0>3} << 1  PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
 
-    chip8.v[x_reg] <<= 1;
+    chip8.v[x_reg], chip8.v[0xF] = @shlWithOverflow(chip8.v[x_reg], 1);
     chip8.pc += 2;
 
     std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
@@ -713,7 +729,7 @@ fn printRegisters(chip8: Chip8) void {
         const r2 = chip8.v[i + 2];
         const r3 = chip8.v[i + 3];
         std.debug.print(
-            "V{d}: 0x{x:0>3}    V{d}: 0x{x:0>3}    V{d}: 0x{x:0>3}    V{d}: 0x{x:0>3}\n",
+            "V{d}: 0x{x:0>2}    V{d}: 0x{x:0>2}    V{d}: 0x{x:0>2}    V{d}: 0x{x:0>2}\n",
             .{ i, r0, i + 1, r1, i + 2, r2, i + 3, r3 },
         );
     }
