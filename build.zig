@@ -5,19 +5,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // const sdl_dep = b.dependency("SDL", .{
-    //     .optimize = .ReleaseFast,
-    //     .target = target,
-    // });
-
     const sdl_mod = b.addModule("sdl", .{
         .root_source_file = b.path("src/sdl.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const mod = b.addModule("chip_8", .{
-        .root_source_file = b.path("src/root.zig"),
+    const chip8_mod = b.addModule("chip_8", .{
+        .root_source_file = b.path("src/chip8.zig"),
         .target = target,
         .imports = &.{.{ .name = "sdl", .module = sdl_mod }},
     });
@@ -29,13 +24,12 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "chip_8", .module = mod }, .{ .name = "sdl", .module = sdl_mod },
+                .{ .name = "chip_8", .module = chip8_mod }, .{ .name = "sdl", .module = sdl_mod },
             },
         }),
     });
 
     if (target.result.os.tag == .linux) {
-        // SU LINUX: usa SDL2 di sistema, NON il pacchetto SDL.zig
         exe.linkSystemLibrary("SDL2");
         exe.linkLibC();
     } else {
@@ -60,7 +54,7 @@ pub fn build(b: *std.Build) void {
     }
 
     const mod_tests = b.addTest(.{
-        .root_module = mod,
+        .root_module = chip8_mod,
     });
 
     const run_mod_tests = b.addRunArtifact(mod_tests);
