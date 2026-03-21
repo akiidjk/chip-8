@@ -51,8 +51,8 @@ pub fn main() !void {
         "chip-8",
         sdl.SDL_WINDOWPOS_CENTERED,
         sdl.SDL_WINDOWPOS_CENTERED,
-        640,
-        320,
+        720,
+        360,
         sdl.SDL_WINDOW_SHOWN,
     ) orelse sdlPanic();
     defer _ = sdl.SDL_DestroyWindow(window);

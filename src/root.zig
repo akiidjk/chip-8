@@ -3,27 +3,34 @@ const std = @import("std");
 const sdl = @import("sdl").c;
 const sdlPanic = @import("sdl").sdlPanic;
 
+const FPS = 60;
+const INSTR_X_FRAME = 15;
+const MILLISECOND_X_FRAME = (1000 / FPS);
+
 const Chip8 = struct {
     running: bool = false,
     opcode: u16 = 0,
-    memory: [4096]u8, // 4KB (4096 bytes)
+    memory: [4096]u8, // 4KB
     pc: u16 = 0x200,
-    i: u16 = 0,
-    v: [16]u8, // 16 registri da 16 bit
+    I: u16 = 0,
+    V: [16]u8,
 
-    stack: [16]u16, // 16
+    stack: [16]u16,
     sp: u16 = 0,
 
-    gfx: [64 * 32]u8, // 64 * 32
+    gfx: [64 * 32]u8,
 
-    delay_timer: u8 = 0,
-    sound_time: u8 = 0,
+    delayTimer: u8 = 0,
+    soundTimer: u8 = 0,
 
-    key: [16]u8, // 16
+    key: [16]u8,
 
     draw: bool,
 
     renderer: *sdl.SDL_Renderer,
+
+    setCarry: bool,
+    carryValue: u1,
 };
 
 const FONT = [_]u8{
@@ -43,66 +50,6 @@ const FONT = [_]u8{
     0xE0, 0x90, 0x90, 0x90, 0xE0, // D
     0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
     0xF0, 0x80, 0xF0, 0x80, 0x80, // F
-};
-
-const OpHandler = *const fn (*Chip8) void;
-
-const OpcodeDesc = struct {
-    mask: u16,
-    value: u16,
-    handler: OpHandler,
-};
-
-// opcode & mask = value
-const opcode_table = [_]OpcodeDesc{
-    // 0x00E0 and 0x00EE are specific, 0x0NNN (SYS) is generic
-    .{ .mask = 0xF0FF, .value = 0x00E0, .handler = op00e0 },
-    // .{ .mask = 0xF0FF, .value = 0x00EE, .handler = op_00ee },
-    // .{ .mask = 0xF000, .value = 0x0000, .handler = op_0nnn },
-
-    .{ .mask = 0xF000, .value = 0x1000, .handler = op1nnn },
-    // .{ .mask = 0xF000, .value = 0x2000, .handler = op_2nnn },
-    // .{ .mask = 0xF000, .value = 0x3000, .handler = op_3xkk },
-    // .{ .mask = 0xF000, .value = 0x4000, .handler = op_4xkk },
-
-    // 5XY0 and 9XY0 need to check low nibble == 0
-    // .{ .mask = 0xF00F, .value = 0x5000, .handler = op_5xy0 },
-
-    .{ .mask = 0xF000, .value = 0x6000, .handler = op6xkk },
-    .{ .mask = 0xF000, .value = 0x7000, .handler = op7xkk },
-
-    // 8XY_ family based on lowest nibble
-    // .{ .mask = 0xF00F, .value = 0x8000, .handler = op_8xy0 },
-    // .{ .mask = 0xF00F, .value = 0x8001, .handler = op_8xy1 },
-    // .{ .mask = 0xF00F, .value = 0x8002, .handler = op_8xy2 },
-    // .{ .mask = 0xF00F, .value = 0x8003, .handler = op_8xy3 },
-    // .{ .mask = 0xF00F, .value = 0x8004, .handler = op_8xy4 },
-    // .{ .mask = 0xF00F, .value = 0x8005, .handler = op_8xy5 },
-    // .{ .mask = 0xF00F, .value = 0x8006, .handler = op_8xy6 },
-    // .{ .mask = 0xF00F, .value = 0x8007, .handler = op_8xy7 },
-    // .{ .mask = 0xF00F, .value = 0x800E, .handler = op_8xye },
-
-    // .{ .mask = 0xF00F, .value = 0x9000, .handler = op_9xy0 },
-
-    .{ .mask = 0xF000, .value = 0xA000, .handler = opannn },
-    // .{ .mask = 0xF000, .value = 0xB000, .handler = op_bnnn },
-    // .{ .mask = 0xF000, .value = 0xC000, .handler = op_cxkk },
-    .{ .mask = 0xF000, .value = 0xD000, .handler = opdxyn },
-
-    // EX__ key opcodes
-    // .{ .mask = 0xF0FF, .value = 0xE09E, .handler = op_ex9e },
-    // .{ .mask = 0xF0FF, .value = 0xE0A1, .handler = op_exa1 },
-
-    // FX__ family (timers, memory, sound, keys, I operations)
-    // .{ .mask = 0xF0FF, .value = 0xF007, .handler = op_fx07 },
-    // .{ .mask = 0xF0FF, .value = 0xF00A, .handler = op_fx0a },
-    // .{ .mask = 0xF0FF, .value = 0xF015, .handler = op_fx15 },
-    // .{ .mask = 0xF0FF, .value = 0xF018, .handler = op_fx18 },
-    // .{ .mask = 0xF0FF, .value = 0xF01E, .handler = op_fx1e },
-    // .{ .mask = 0xF0FF, .value = 0xF029, .handler = op_fx29 },
-    // .{ .mask = 0xF0FF, .value = 0xF033, .handler = op_fx33 },
-    // .{ .mask = 0xF0FF, .value = 0xF055, .handler = op_fx55 },
-    // .{ .mask = 0xF0FF, .value = 0xF065, .handler = op_fx65 },
 };
 
 pub fn bufferedPrint() !void {
@@ -133,37 +80,91 @@ pub fn run(window: *sdl.SDL_Window, rom: []u8) !void {
     chip8.running = true;
 
     var i: u32 = 0; //debug
+    var ins_counter: u32 = 0;
+
+    _ = sdl.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xFF);
+    sdl.SDL_RenderPresent(renderer);
+    _ = sdl.SDL_RenderClear(renderer);
 
     while (chip8.running) {
-        var ev: sdl.SDL_Event = undefined;
-        chip8.opcode = fetch(chip8);
-        printRegisters(chip8);
-        decodeAndExec(&chip8);
+        const startFrameTime: u32 = sdl.SDL_GetTicks();
+        inputHandling(&chip8);
 
-        i += 1; // debug
-        i = 0;
-        if (i == 950) { // debug
-            return;
+        while (ins_counter < INSTR_X_FRAME) : (ins_counter += 1) { // INSTRUCTION RUNNER
+            if (chip8.setCarry) {
+                chip8.V[0xF] = chip8.carryValue;
+                chip8.setCarry = false;
+            }
+
+            chip8.opcode = fetch(chip8);
+            printRegisters(chip8);
+            // printKeysStatus(chip8);
+            decodeAndExec(&chip8);
+
+            i += 1; // debug
+            i = 0;
+            if (i == 1000) { // debug
+                return;
+            }
         }
 
+        //Delay
+        if (ins_counter >= INSTR_X_FRAME) {
+            if (chip8.delayTimer > 0) chip8.delayTimer -= 1;
+            if (chip8.soundTimer > 0) chip8.soundTimer -= 1;
+            ins_counter = 0;
+        }
+
+        // RENDER
         if (chip8.draw) {
-            _ = sdl.SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xFF);
-            sdl.SDL_RenderPresent(renderer);
-            _ = sdl.SDL_RenderClear(renderer);
-
             draw(chip8);
-
-            // printGFX(chip8);
             chip8.draw = false;
         }
 
-        while (sdl.SDL_PollEvent(&ev) != 0) {
-            if (ev.type == sdl.SDL_QUIT)
-                break;
+        const frameDuration: u32 = sdl.SDL_GetTicks() - startFrameTime;
+        if (frameDuration < MILLISECOND_X_FRAME) {
+            sdl.SDL_Delay(MILLISECOND_X_FRAME - frameDuration);
         }
+
+        std.Thread.sleep(1000000000 / 120); // Small sleep
     }
 
     return;
+}
+
+fn inputHandling(chip8: *Chip8) void {
+    var e: sdl.SDL_Event = undefined;
+    while (sdl.SDL_PollEvent(&e) != 0) {
+        if (e.type == sdl.SDL_QUIT) {
+            chip8.running = false;
+            break;
+        }
+        if (e.type == sdl.SDL_KEYDOWN or e.type == sdl.SDL_KEYUP) {
+            const pressed: u8 = if (e.type == sdl.SDL_KEYDOWN) 1 else 0;
+            switch (e.key.keysym.sym) {
+                sdl.SDLK_1 => chip8.key[0x1] = pressed,
+                sdl.SDLK_2 => chip8.key[0x2] = pressed,
+                sdl.SDLK_3 => chip8.key[0x3] = pressed,
+                sdl.SDLK_4 => chip8.key[0xC] = pressed,
+
+                sdl.SDLK_q => chip8.key[0x4] = pressed,
+                sdl.SDLK_w => chip8.key[0x5] = pressed,
+                sdl.SDLK_e => chip8.key[0x6] = pressed,
+                sdl.SDLK_r => chip8.key[0xD] = pressed,
+
+                sdl.SDLK_a => chip8.key[0x7] = pressed,
+                sdl.SDLK_s => chip8.key[0x8] = pressed,
+                sdl.SDLK_d => chip8.key[0x9] = pressed,
+                sdl.SDLK_f => chip8.key[0xE] = pressed,
+
+                sdl.SDLK_z => chip8.key[0xA] = pressed,
+                sdl.SDLK_x => chip8.key[0x0] = pressed,
+                sdl.SDLK_c => chip8.key[0xB] = pressed,
+                sdl.SDLK_v => chip8.key[0xF] = pressed,
+                else => {},
+            }
+        }
+    }
 }
 
 fn fetch(chip8: Chip8) u16 {
@@ -198,8 +199,14 @@ fn decodeAndExec(chip8: *Chip8) void {
                 0x00EE => {
                     op00ee(chip8);
                 },
-                else => {
+                0x0000 => {
                     op0nnn(chip8);
+                },
+                else => {
+                    std.debug.print("Unknown opcode: 0x{x:0>4}\n", .{opcode});
+                    // Advance PC to avoid getting stuck on unknown opcode
+                    chip8.running = false;
+                    chip8.pc += 2;
                 },
             }
         },
@@ -250,8 +257,14 @@ fn decodeAndExec(chip8: *Chip8) void {
                 0x800E => {
                     op_8xye(chip8);
                 },
-                else => {
+                0x8000 => {
                     op_8xy0(chip8);
+                },
+                else => {
+                    std.debug.print("Unknown opcode: 0x{x:0>4}\n", .{opcode});
+                    // Advance PC to avoid getting stuck on unknown opcode
+                    chip8.running = false;
+                    chip8.pc += 2;
                 },
             }
         },
@@ -264,11 +277,31 @@ fn decodeAndExec(chip8: *Chip8) void {
         0xD000 => { // DXYN: draw sprite
             opdxyn(chip8);
         },
+        0xE000 => { // Keys
+            switch (opcode & 0xF0FF) {
+                0xE09E => {
+                    opex9e(chip8);
+                },
+                0xE0A1 => {
+                    opexa1(chip8);
+                },
+                else => {
+                    std.debug.print("Unknown opcode: 0x{x:0>4}\n", .{opcode});
+                    // Advance PC to avoid getting stuck on unknown opcode
+                    chip8.running = false;
+                    chip8.pc += 2;
+                },
+            }
+        },
         0xF000 => {
             switch (opcode & 0xF0FF) {
-                // 0xF007 => {},
+                0xF007 => {
+                    op_fx07(chip8);
+                },
                 // 0xF00A => {},
-                // 0xF015 => {},
+                0xF015 => {
+                    op_fx15(chip8);
+                },
                 // 0xF018 => {},
                 0xF01E => {
                     op_fx1e(chip8);
@@ -283,7 +316,12 @@ fn decodeAndExec(chip8: *Chip8) void {
                 0xF065 => {
                     op_fx65(chip8);
                 },
-                else => {},
+                else => {
+                    std.debug.print("Unknown opcode: 0x{x:0>4}\n", .{opcode});
+                    // Advance PC to avoid getting stuck on unknown opcode
+                    chip8.running = false;
+                    chip8.pc += 2;
+                },
             }
         },
         else => {
@@ -297,10 +335,10 @@ fn decodeAndExec(chip8: *Chip8) void {
 
 // Init function
 fn init(rom: []u8, renderer: *sdl.SDL_Renderer) !Chip8 {
-    var chip8: Chip8 = .{ .memory = undefined, .v = undefined, .stack = undefined, .gfx = undefined, .key = undefined, .pc = 0x200, .i = 0, .draw = false, .opcode = 0, .delay_timer = 0, .running = false, .sound_time = 0, .sp = 0, .renderer = renderer };
+    var chip8: Chip8 = .{ .memory = undefined, .V = undefined, .stack = undefined, .gfx = undefined, .key = undefined, .pc = 0x200, .I = 0, .draw = false, .opcode = 0, .delayTimer = 0, .running = false, .soundTimer = 0, .sp = 0, .renderer = renderer, .setCarry = false, .carryValue = 0 };
 
     @memset(&chip8.memory, 0);
-    @memset(&chip8.v, 0);
+    @memset(&chip8.V, 0);
     @memset(&chip8.stack, 0);
     @memset(&chip8.gfx, 0);
     @memset(&chip8.key, 0);
@@ -316,7 +354,7 @@ fn init(rom: []u8, renderer: *sdl.SDL_Renderer) !Chip8 {
 
 // ------------ Handlers ------------
 fn op00e0(chip8: *Chip8) void {
-    _ = sdl.SDL_RenderClear(chip8.renderer);
+    @memset(&chip8.gfx, 0);
     chip8.draw = true;
     chip8.pc += 2;
 }
@@ -361,10 +399,10 @@ fn op3xkk(chip8: *Chip8) void {
 
     std.debug.print(
         "op3xkk: V{d}=0x{x:0>3} ?= 0x{x:0>3}  PC=0x{x:0>3}\n",
-        .{ index_reg, chip8.v[index_reg], constant_8, chip8.pc },
+        .{ index_reg, chip8.V[index_reg], constant_8, chip8.pc },
     );
 
-    if (chip8.v[index_reg] == constant_8) {
+    if (chip8.V[index_reg] == constant_8) {
         chip8.pc += 4;
         std.debug.print("  -> equal, skipping next instruction. New PC=0x{x:0>3}\n", .{chip8.pc});
     } else {
@@ -378,10 +416,10 @@ fn op4xkk(chip8: *Chip8) void {
 
     std.debug.print(
         "op4xkk: V{d}=0x{x:0>3} != 0x{x:0>3}?  PC=0x{x:0>3}\n",
-        .{ index_reg, chip8.v[index_reg], constant_8, chip8.pc },
+        .{ index_reg, chip8.V[index_reg], constant_8, chip8.pc },
     );
 
-    if (chip8.v[index_reg] != constant_8) {
+    if (chip8.V[index_reg] != constant_8) {
         chip8.pc += 4;
         std.debug.print("  -> not equal, skipping next instruction. New PC=0x{x:0>3}\n", .{chip8.pc});
     } else {
@@ -395,10 +433,10 @@ fn op5xy0(chip8: *Chip8) void {
 
     std.debug.print(
         "op5xy0: V{d}=0x{x:0>3} == V{d}=0x{x:0>3}?  PC=0x{x:0>3}\n",
-        .{ x, chip8.v[x], y, chip8.v[y], chip8.pc },
+        .{ x, chip8.V[x], y, chip8.V[y], chip8.pc },
     );
 
-    if (chip8.v[x] == chip8.v[y]) {
+    if (chip8.V[x] == chip8.V[y]) {
         chip8.pc += 4;
         std.debug.print("  -> equal, skipping next instruction. New PC=0x{x:0>3}\n", .{chip8.pc});
     } else {
@@ -412,13 +450,13 @@ fn op6xkk(chip8: *Chip8) void {
 
     std.debug.print(
         "op6xkk: Set V{d} = 0x{x:0>3} (was 0x{x:0>3})  PC=0x{x:0>3}\n",
-        .{ index_reg, value, chip8.v[index_reg], chip8.pc },
+        .{ index_reg, value, chip8.V[index_reg], chip8.pc },
     );
 
-    chip8.v[index_reg] = value;
+    chip8.V[index_reg] = value;
     chip8.pc += 2;
 
-    std.debug.print("  -> done. New V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ index_reg, chip8.v[index_reg], chip8.pc });
+    std.debug.print("  -> done. New V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ index_reg, chip8.V[index_reg], chip8.pc });
 }
 
 fn op7xkk(chip8: *Chip8) void {
@@ -427,13 +465,13 @@ fn op7xkk(chip8: *Chip8) void {
 
     std.debug.print(
         "op7xkk: V{d} += 0x{x:0>3}  (was 0x{x:0>3})  PC=0x{x:0>3}\n",
-        .{ index_register, value, chip8.v[index_register], chip8.pc },
+        .{ index_register, value, chip8.V[index_register], chip8.pc },
     );
 
-    chip8.v[index_register], chip8.v[0xF] = @addWithOverflow(chip8.v[index_register], value);
+    chip8.V[index_register], chip8.V[0xF] = @addWithOverflow(chip8.V[index_register], value);
     chip8.pc += 2;
 
-    std.debug.print("  -> done. New V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ index_register, chip8.v[index_register], chip8.pc });
+    std.debug.print("  -> done. New V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ index_register, chip8.V[index_register], chip8.pc });
 }
 fn op_8xy0(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
@@ -441,13 +479,13 @@ fn op_8xy0(chip8: *Chip8) void {
 
     std.debug.print(
         "op_8xy0: V{d} = V{d}  (0x{x:0>3} -> 0x{x:0>3})  PC=0x{x:0>3}\n",
-        .{ x_reg, y_reg, chip8.v[y_reg], chip8.v[x_reg], chip8.pc },
+        .{ x_reg, y_reg, chip8.V[y_reg], chip8.V[x_reg], chip8.pc },
     );
 
-    chip8.v[x_reg] = chip8.v[y_reg];
+    chip8.V[x_reg] = chip8.V[y_reg];
     chip8.pc += 2;
 
-    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
+    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg], chip8.pc });
 }
 fn op_8xy1(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
@@ -455,13 +493,13 @@ fn op_8xy1(chip8: *Chip8) void {
 
     std.debug.print(
         "op_8xy1: V{d} |= V{d}  (0x{x:0>3} |= 0x{x:0>3})  PC=0x{x:0>3}\n",
-        .{ x_reg, y_reg, chip8.v[x_reg], chip8.v[y_reg], chip8.pc },
+        .{ x_reg, y_reg, chip8.V[x_reg], chip8.V[y_reg], chip8.pc },
     );
 
-    chip8.v[x_reg] |= chip8.v[y_reg];
+    chip8.V[x_reg] |= chip8.V[y_reg];
     chip8.pc += 2;
 
-    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
+    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg], chip8.pc });
 }
 fn op_8xy2(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
@@ -469,13 +507,13 @@ fn op_8xy2(chip8: *Chip8) void {
 
     std.debug.print(
         "op_8xy2: V{d} &= V{d}  (0x{x:0>3} &= 0x{x:0>3})  PC=0x{x:0>3}\n",
-        .{ x_reg, y_reg, chip8.v[x_reg], chip8.v[y_reg], chip8.pc },
+        .{ x_reg, y_reg, chip8.V[x_reg], chip8.V[y_reg], chip8.pc },
     );
 
-    chip8.v[x_reg] &= chip8.v[y_reg];
+    chip8.V[x_reg] &= chip8.V[y_reg];
     chip8.pc += 2;
 
-    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
+    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg], chip8.pc });
 }
 fn op_8xy3(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
@@ -483,13 +521,13 @@ fn op_8xy3(chip8: *Chip8) void {
 
     std.debug.print(
         "op_8xy3: V{d} ^= V{d}  (0x{x:0>3} ^= 0x{x:0>3})  PC=0x{x:0>3}\n",
-        .{ x_reg, y_reg, chip8.v[x_reg], chip8.v[y_reg], chip8.pc },
+        .{ x_reg, y_reg, chip8.V[x_reg], chip8.V[y_reg], chip8.pc },
     );
 
-    chip8.v[x_reg] ^= chip8.v[y_reg];
+    chip8.V[x_reg] ^= chip8.V[y_reg];
     chip8.pc += 2;
 
-    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
+    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg], chip8.pc });
 }
 fn op_8xy4(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
@@ -497,45 +535,52 @@ fn op_8xy4(chip8: *Chip8) void {
 
     std.debug.print(
         "op_8xy4: V{d} += V{d}  (0x{x:0>3} + 0x{x:0>3})  PC=0x{x:0>3}\n",
-        .{ x_reg, y_reg, chip8.v[x_reg], chip8.v[y_reg], chip8.pc },
+        .{ x_reg, y_reg, chip8.V[x_reg], chip8.V[y_reg], chip8.pc },
     );
 
-    const X: u16 = @intCast(chip8.v[x_reg]);
-    const Y: u16 = @intCast(chip8.v[y_reg]);
-    chip8.v[0xF] = if (X + Y > 0xFF) 1 else 0;
-    chip8.v[x_reg], _ = @addWithOverflow(chip8.v[x_reg], chip8.v[y_reg]);
+    const X: u16 = @intCast(chip8.V[x_reg]);
+    const Y: u16 = @intCast(chip8.V[y_reg]);
+    chip8.carryValue = if (X + Y > 0xFF) 1 else 0;
+    chip8.setCarry = true;
+    chip8.V[x_reg], _ = @addWithOverflow(chip8.V[x_reg], chip8.V[y_reg]);
 
     chip8.pc += 2;
-    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
+    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg], chip8.pc });
 }
+
 fn op_8xy5(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
     const y_reg = (chip8.opcode & 0x00F0) >> 4;
 
     std.debug.print(
         "op_8xy5: V{d} -= V{d}  (V{d}=0x{x:0>3}, V{d}=0x{x:0>3})\n",
-        .{ x_reg, y_reg, x_reg, chip8.v[x_reg], y_reg, chip8.v[y_reg] },
+        .{ x_reg, y_reg, x_reg, chip8.V[x_reg], y_reg, chip8.V[y_reg] },
     );
 
-    if (chip8.v[x_reg] > chip8.v[y_reg]) {
-        chip8.v[0xF] = 1;
+    if (chip8.V[x_reg] >= chip8.V[y_reg]) {
+        chip8.carryValue = 1;
     } else {
-        chip8.v[0xF] = 1;
+        chip8.carryValue = 0;
     }
-    chip8.v[x_reg], _ = @subWithOverflow(chip8.v[x_reg], chip8.v[y_reg]);
+    chip8.setCarry = true;
+    chip8.V[x_reg], _ = @subWithOverflow(chip8.V[x_reg], chip8.V[y_reg]);
 
     chip8.pc += 2;
-    std.debug.print("V{d} now=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg] });
+    std.debug.print("V{d} now=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg] });
 }
 fn op_8xy6(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
+    // const y_reg = (chip8.opcode & 0x00F0) >> 4;
 
-    std.debug.print("op_8xy6: V{d}=0x{x:0>3} >> 1  PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
+    std.debug.print("op_8xy6: V{d}=0x{x:0>3} >> 1  PC=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg], chip8.pc });
 
-    chip8.v[x_reg] >>= 1;
+    chip8.carryValue = @intCast(chip8.V[x_reg] & 1);
+    chip8.V[x_reg] >>= 1;
+    chip8.setCarry = true;
+
     chip8.pc += 2;
 
-    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
+    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg], chip8.pc });
 }
 fn op_8xy7(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
@@ -543,15 +588,17 @@ fn op_8xy7(chip8: *Chip8) void {
 
     std.debug.print(
         "op_8xy7: V{d} = V{d} - V{d}  (V{d}=0x{x:0>3}, V{d}=0x{x:0>3})  PC=0x{x:0>3}\n",
-        .{ x_reg, y_reg, x_reg, x_reg, chip8.v[x_reg], y_reg, chip8.v[y_reg], chip8.pc },
+        .{ x_reg, y_reg, x_reg, x_reg, chip8.V[x_reg], y_reg, chip8.V[y_reg], chip8.pc },
     );
 
-    if (chip8.v[x_reg] < chip8.v[y_reg]) {
-        chip8.v[0xF] = 1;
+    if (chip8.V[y_reg] >= chip8.V[x_reg]) {
+        chip8.carryValue = 1;
     } else {
-        chip8.v[0xF] = 1;
+        chip8.carryValue = 0;
     }
-    chip8.v[x_reg], _ = @subWithOverflow(chip8.v[y_reg], chip8.v[x_reg]);
+    chip8.setCarry = true;
+    chip8.V[x_reg], _ = @subWithOverflow(chip8.V[y_reg], chip8.V[x_reg]);
+
     chip8.pc += 2;
     std.debug.print("  PC now=0x{x:0>3}\n", .{chip8.pc});
 }
@@ -559,12 +606,13 @@ fn op_8xy7(chip8: *Chip8) void {
 fn op_8xye(chip8: *Chip8) void {
     const x_reg = (chip8.opcode & 0x0F00) >> 8;
 
-    std.debug.print("op_8xye: V{d}=0x{x:0>3} << 1  PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
+    std.debug.print("op_8xye: V{d}=0x{x:0>3} << 1  PC=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg], chip8.pc });
 
-    chip8.v[x_reg], chip8.v[0xF] = @shlWithOverflow(chip8.v[x_reg], 1);
+    chip8.V[x_reg], chip8.carryValue = @shlWithOverflow(chip8.V[x_reg], 1);
+    chip8.setCarry = true;
     chip8.pc += 2;
 
-    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.v[x_reg], chip8.pc });
+    std.debug.print("  -> done. V{d}=0x{x:0>3}, PC=0x{x:0>3}\n", .{ x_reg, chip8.V[x_reg], chip8.pc });
 }
 
 fn op9xy0(chip8: *Chip8) void {
@@ -573,10 +621,10 @@ fn op9xy0(chip8: *Chip8) void {
 
     std.debug.print(
         "op9xy0: V{d}=0x{x:0>3} != V{d}=0x{x:0>3}?  PC=0x{x:0>3}\n",
-        .{ x, chip8.v[x], y, chip8.v[y], chip8.pc },
+        .{ x, chip8.V[x], y, chip8.V[y], chip8.pc },
     );
 
-    if (chip8.v[x] != chip8.v[y]) {
+    if (chip8.V[x] != chip8.V[y]) {
         chip8.pc += 4;
         std.debug.print("  -> not equal, skipping next instruction. New PC=0x{x:0>3}\n", .{chip8.pc});
     } else {
@@ -587,12 +635,12 @@ fn op9xy0(chip8: *Chip8) void {
 fn opannn(chip8: *Chip8) void {
     const address = chip8.opcode & 0x0FFF;
 
-    std.debug.print("opannn: Set I = 0x{x:0>3} (was 0x{x:0>3})  PC=0x{x:0>3}\n", .{ address, chip8.i, chip8.pc });
+    std.debug.print("opannn: Set I = 0x{x:0>3} (was 0x{x:0>3})  PC=0x{x:0>3}\n", .{ address, chip8.I, chip8.pc });
 
-    chip8.i = address;
+    chip8.I = address;
     chip8.pc += 2;
 
-    std.debug.print("  -> done. I=0x{x:0>3}, PC=0x{x:0>3}\n", .{ chip8.i, chip8.pc });
+    std.debug.print("  -> done. I=0x{x:0>3}, PC=0x{x:0>3}\n", .{ chip8.I, chip8.pc });
 }
 // fn op_bnnn(chip8: *Chip8) void {}
 // fn op_cxkk(chip8: *Chip8) void {}
@@ -600,18 +648,18 @@ fn opannn(chip8: *Chip8) void {
 fn opdxyn(chip8: *Chip8) void {
     const witdh = 8;
     const height = chip8.opcode & 0x000F;
-    const x = chip8.v[(chip8.opcode & 0x0F00) >> 8];
-    const y = chip8.v[(chip8.opcode & 0x00F0) >> 4];
+    const x = chip8.V[(chip8.opcode & 0x0F00) >> 8];
+    const y = chip8.V[(chip8.opcode & 0x00F0) >> 4];
     var yline: u16 = 0;
-    chip8.v[0xF] = 0;
+    chip8.V[0xF] = 0;
 
     while (yline < height) : (yline += 1) {
-        const pixel = chip8.memory[chip8.i + yline];
+        const pixel = chip8.memory[chip8.I + yline];
         var xline: u16 = 0;
         while (xline < witdh) : (xline += 1) {
             if ((pixel >> @intCast(7 - xline)) & 1 != 0) {
                 if (chip8.gfx[(x + xline + ((y + yline) * 64))] == 1)
-                    chip8.v[0xF] = 1;
+                    chip8.V[0xF] = 1;
                 chip8.gfx[x + xline + ((y + yline) * 64)] ^= 1;
             }
         }
@@ -621,41 +669,80 @@ fn opdxyn(chip8: *Chip8) void {
     chip8.draw = true;
     return;
 }
-// fn op_ex9e(chip8: *Chip8 ) void {}
-// fn op_exa1(chip8: *Chip8 ) void {}
-// fn op_fx07(chip8: *Chip8 ) void {}
+
+fn opex9e(chip8: *Chip8) void {
+    const x = (chip8.opcode & 0x0F00) >> 8;
+    if (chip8.key[chip8.V[x]] == 1) {
+        chip8.pc += 4;
+    } else {
+        chip8.pc += 2;
+    }
+}
+fn opexa1(chip8: *Chip8) void {
+    const x = (chip8.opcode & 0x0F00) >> 8;
+    if (chip8.key[chip8.V[x]] != 1) {
+        chip8.pc += 4;
+    } else {
+        chip8.pc += 2;
+    }
+}
+
+fn op_fx07(chip8: *Chip8) void {
+    const reg_x = (chip8.opcode & 0x0F00) >> 8;
+    const prev_val: u8 = chip8.V[reg_x];
+    const prev_delay: u8 = chip8.delayTimer;
+
+    chip8.V[reg_x] = chip8.delayTimer;
+    chip8.pc += 2;
+
+    std.debug.print(
+        "op_fx07: V{d} = delayTimer (0x{x:0>2}) (was V{d}=0x{x:0>2})  PC=0x{x:0>4}\n",
+        .{ reg_x, prev_delay, reg_x, prev_val, chip8.pc },
+    );
+}
 // fn op_fx0a(chip8: *Chip8 ) void {}
-// fn op_fx15(chip8: *Chip8 ) void {}
+fn op_fx15(chip8: *Chip8) void {
+    const reg_x = (chip8.opcode & 0x0F00) >> 8;
+    const prev_delay: u8 = chip8.delayTimer;
+
+    chip8.delayTimer = chip8.V[reg_x];
+    chip8.pc += 2;
+
+    std.debug.print(
+        "op_fx15: delayTimer = V{d} (0x{x:0>2}) (was 0x{x:0>2})  PC=0x{x:0>4}\n",
+        .{ reg_x, chip8.V[reg_x], prev_delay, chip8.pc },
+    );
+}
 // fn op_fx18(chip8: *Chip8 ) void {}
 fn op_fx1e(chip8: *Chip8) void {
     const reg = (chip8.opcode & 0x0F00) >> 8;
-    const old_i: u16 = chip8.i;
-    const value: u16 = chip8.v[reg];
+    const old_i: u16 = chip8.I;
+    const value: u16 = chip8.V[reg];
 
-    chip8.i = old_i + value;
+    chip8.I = old_i + value;
     chip8.pc += 2;
 
     std.debug.print(
         "op_fx1e: I: 0x{x:0>3} + V{d}: 0x{x:0>3} -> I: 0x{x:0>3}\n",
-        .{ old_i, reg, value, chip8.i },
+        .{ old_i, reg, value, chip8.I },
     );
 }
 // fn op_fx29(chip8: *Chip8 ) void {}
 fn op_fx33(chip8: *Chip8) void {
     const reg_target = (chip8.opcode & 0x0F00) >> 8;
-    const value_bcd = chip8.v[reg_target];
+    const value_bcd = chip8.V[reg_target];
 
     const ones: u8 = @intCast(value_bcd % 10);
     const tens: u8 = @intCast((value_bcd / 10) % 10);
     const hundreds: u8 = @intCast((value_bcd / 100) % 10);
 
-    chip8.memory[chip8.i + 2] = ones;
-    chip8.memory[chip8.i + 1] = tens;
-    chip8.memory[chip8.i] = hundreds;
+    chip8.memory[chip8.I + 2] = ones;
+    chip8.memory[chip8.I + 1] = tens;
+    chip8.memory[chip8.I] = hundreds;
 
     std.debug.print(
         "op_fx33: V{d}=0x{x:0>3} -> mem[0x{x:0>3}]= {d}, mem[0x{x:0>3}+1]= {d}, mem[0x{x:0>3}+2]= {d}\n",
-        .{ reg_target, value_bcd, chip8.i, hundreds, chip8.i, tens, chip8.i, ones },
+        .{ reg_target, value_bcd, chip8.I, hundreds, chip8.I, tens, chip8.I, ones },
     );
 
     chip8.pc += 2;
@@ -666,16 +753,17 @@ fn op_fx55(chip8: *Chip8) void {
 
     std.debug.print(
         "op_fx55: Store V0..V{d} to memory starting at I=0x{x:0>3}\n",
-        .{ final_reg, chip8.i },
+        .{ final_reg, chip8.I },
     );
 
-    while (i < final_reg) : (i += 1) {
-        chip8.memory[chip8.i + i] = @intCast(chip8.v[i]);
+    while (i <= final_reg) : (i += 1) {
+        chip8.memory[chip8.I + i] = @intCast(chip8.V[i]);
         std.debug.print(
             "  mem[0x{x:0>3}+{d}] = 0x{x:0>3}\n",
-            .{ chip8.i, i, chip8.memory[chip8.i + i] },
+            .{ chip8.I, i, chip8.memory[chip8.I + i] },
         );
     }
+    chip8.I += (final_reg + 1);
     chip8.pc += 2;
 }
 fn op_fx65(chip8: *Chip8) void {
@@ -684,16 +772,18 @@ fn op_fx65(chip8: *Chip8) void {
 
     std.debug.print(
         "op_fx65: Load V0..V{d} from memory starting at I=0x{x:0>3}\n",
-        .{ final_reg, chip8.i },
+        .{ final_reg, chip8.I },
     );
 
-    while (i < final_reg) : (i += 1) {
-        chip8.v[i] = chip8.memory[chip8.i + i];
+    while (i <= final_reg) : (i += 1) {
+        chip8.V[i] = chip8.memory[chip8.I + i];
         std.debug.print(
             "  V{d} = 0x{x:0>3}\n",
-            .{ i, chip8.v[i] },
+            .{ i, chip8.V[i] },
         );
     }
+
+    chip8.I += (final_reg + 1);
     chip8.pc += 2;
 }
 
@@ -723,11 +813,11 @@ fn printStack(chip8: Chip8) void {
 fn printRegisters(chip8: Chip8) void {
     std.debug.print("--------- Registers --------- \n", .{});
     var i: usize = 0;
-    while (i < chip8.v.len) : (i += 4) {
-        const r0 = chip8.v[i];
-        const r1 = chip8.v[i + 1];
-        const r2 = chip8.v[i + 2];
-        const r3 = chip8.v[i + 3];
+    while (i < chip8.V.len) : (i += 4) {
+        const r0 = chip8.V[i];
+        const r1 = chip8.V[i + 1];
+        const r2 = chip8.V[i + 2];
+        const r3 = chip8.V[i + 3];
         std.debug.print(
             "V{d}: 0x{x:0>2}    V{d}: 0x{x:0>2}    V{d}: 0x{x:0>2}    V{d}: 0x{x:0>2}\n",
             .{ i, r0, i + 1, r1, i + 2, r2, i + 3, r3 },
@@ -735,16 +825,16 @@ fn printRegisters(chip8: Chip8) void {
     }
 
     std.debug.print(
-        "I: 0x{x:0>4}    PC: 0x{x:0>4}    SP: 0x{x:0>2}\n",
-        .{ chip8.i, chip8.pc, chip8.sp },
+        "I: 0x{x:0>4}    PC: 0x{x:0>4}    SP: 0x{x:0>2}    SetCarry: {}    CarryValue: {d}\n",
+        .{ chip8.I, chip8.pc, chip8.sp, chip8.setCarry, chip8.carryValue },
     );
 
     std.debug.print(
         "Opcode: 0x{x:0>4}    Delay: 0x{x:0>2}    Sound: 0x{x:0>2}    Draw: {s}    Running: {s}\n",
         .{
             chip8.opcode,
-            chip8.delay_timer,
-            chip8.sound_time,
+            chip8.delayTimer,
+            chip8.soundTimer,
             if (chip8.draw) "true" else "false",
             if (chip8.running) "true" else "false",
         },
@@ -758,6 +848,18 @@ fn printGFX(chip8: Chip8) void {
         var x: usize = 0;
         while (x < 32) : (x += 1) {
             std.debug.print("{d} ", .{chip8.gfx[y * 32 + x]});
+        }
+        std.debug.print("\n", .{});
+    }
+}
+
+fn printKeysStatus(chip8: Chip8) void {
+    std.debug.print("------- KEYS MATRIX -------\n", .{});
+    var y: usize = 0;
+    while (y < 4) : (y += 1) {
+        var x: usize = 0;
+        while (x < 4) : (x += 1) {
+            std.debug.print("{d} ", .{chip8.key[y * 4 + x]});
         }
         std.debug.print("\n", .{});
     }
