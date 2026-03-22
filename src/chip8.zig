@@ -34,7 +34,9 @@ pub const Chip8 = struct {
 
     renderer: *sdl.SDL_Renderer,
 
+    // Debug shit
     cycles: i32,
+    breakpoint: i32,
 };
 
 const FONT = [_]u8{
@@ -60,7 +62,7 @@ const FONT = [_]u8{
 
 // Init function
 pub fn init(rom: []u8, renderer: *sdl.SDL_Renderer) Chip8 {
-    var chip8: Chip8 = .{ .memory = undefined, .V = undefined, .stack = undefined, .gfx = undefined, .keys = undefined, .PC = 0x200, .I = 0, .draw = false, .opcode = 0, .delayTimer = 0, .running = false, .soundTimer = 0, .SP = 0, .renderer = renderer, .cycles = 0 };
+    var chip8: Chip8 = .{ .memory = undefined, .V = undefined, .stack = undefined, .gfx = undefined, .keys = undefined, .PC = 0x200, .I = 0, .draw = false, .opcode = 0, .delayTimer = 0, .running = false, .soundTimer = 0, .SP = 0, .renderer = renderer, .cycles = 0, .breakpoint = -1 };
 
     @memset(&chip8.memory, 0);
     @memset(&chip8.V, 0);
@@ -77,11 +79,28 @@ pub fn init(rom: []u8, renderer: *sdl.SDL_Renderer) Chip8 {
     return chip8;
 }
 
+fn handleBreakpoint(chip8: *Chip8) !void {
+    if (chip8.PC == chip8.breakpoint and chip8.breakpoint != -1) {
+        debug.printChip8State(chip8) catch {};
+        chip8Logger.info("Breakpoint reached: 0x{x:0>4} Press 'n' for get to next instruction \n", .{chip8.breakpoint});
+
+        var stdin_buffer: [1024]u8 = undefined;
+        var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+        _ = try stdin_reader.interface.takeDelimiterExclusive('\n');
+        switch (stdin_buffer[0]) {
+            'n', 'N' => { // if n go move br to next instruction
+                chip8.breakpoint = chip8.PC + 2;
+            },
+            else => {
+                // continue normally
+            },
+        }
+    }
+}
+
 pub fn run(chip8: *Chip8) !void {
     chip8.running = true;
     var ins_counter: u32 = 0;
-
-    var breakpoint: i32 = -1;
 
     while (chip8.running) {
         const startFrameTime: u32 = sdl.SDL_GetTicks();
@@ -89,22 +108,7 @@ pub fn run(chip8: *Chip8) !void {
         handleInput(chip8);
 
         while (ins_counter < INSTR_X_FRAME) : (ins_counter += 1) { // INSTRUCTION RUNNER
-            if (chip8.PC == breakpoint and breakpoint != -1) {
-                debug.printChip8State(chip8) catch {};
-                chip8Logger.info("Breakpoint reaced: 0x{x:0>4} Press 'n' for get to next instruction \n", .{breakpoint});
-
-                var stdin_buffer: [1024]u8 = undefined;
-                var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
-                _ = try stdin_reader.interface.takeDelimiterExclusive('\n');
-                switch (stdin_buffer[0]) {
-                    'n', 'N' => { // if n go to next instruction
-                        breakpoint += 2;
-                    },
-                    else => {
-                        // continue normally
-                    },
-                }
-            }
+            try handleBreakpoint(chip8);
 
             step(chip8);
             chip8.cycles += 1;
