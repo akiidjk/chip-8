@@ -2,6 +2,10 @@ const std = @import("std");
 const sdl = @import("sdl").c;
 const sdlPanic = @import("sdl").sdlPanic;
 const debug = @import("debug.zig");
+const chip8Logger = @import("logging").chip8;
+const sdlLogger = @import("logging").sdl;
+
+// https://chip8.gulrak.net/ ALL QUIRKS DOCS
 
 const FPS = 60;
 const INSTR_X_FRAME: u32 = 15;
@@ -24,11 +28,13 @@ pub const Chip8 = struct {
     delayTimer: u8 = 0,
     soundTimer: u8 = 0,
 
-    key: [16]u8,
+    keys: [16]u8,
 
     draw: bool,
 
     renderer: *sdl.SDL_Renderer,
+
+    cycles: i32,
 };
 
 const FONT = [_]u8{
@@ -54,16 +60,16 @@ const FONT = [_]u8{
 
 // Init function
 pub fn init(rom: []u8, renderer: *sdl.SDL_Renderer) Chip8 {
-    var chip8: Chip8 = .{ .memory = undefined, .V = undefined, .stack = undefined, .gfx = undefined, .key = undefined, .PC = 0x200, .I = 0, .draw = false, .opcode = 0, .delayTimer = 0, .running = false, .soundTimer = 0, .SP = 0, .renderer = renderer };
+    var chip8: Chip8 = .{ .memory = undefined, .V = undefined, .stack = undefined, .gfx = undefined, .keys = undefined, .PC = 0x200, .I = 0, .draw = false, .opcode = 0, .delayTimer = 0, .running = false, .soundTimer = 0, .SP = 0, .renderer = renderer, .cycles = 0 };
 
     @memset(&chip8.memory, 0);
     @memset(&chip8.V, 0);
     @memset(&chip8.stack, 0);
     @memset(&chip8.gfx, 0);
-    @memset(&chip8.key, 0);
+    @memset(&chip8.keys, 0);
 
     // Load fonts
-    @memcpy(chip8.memory[0..][0..FONT.len], &FONT);
+    @memcpy(chip8.memory[0..FONT.len], &FONT);
 
     // Load rom
     @memcpy(chip8.memory[0x200 .. 0x200 + rom.len], rom);
@@ -75,13 +81,33 @@ pub fn run(chip8: *Chip8) !void {
     chip8.running = true;
     var ins_counter: u32 = 0;
 
+    var breakpoint: i32 = -1;
+
     while (chip8.running) {
         const startFrameTime: u32 = sdl.SDL_GetTicks();
 
         handleInput(chip8);
 
         while (ins_counter < INSTR_X_FRAME) : (ins_counter += 1) { // INSTRUCTION RUNNER
+            if (chip8.PC == breakpoint and breakpoint != -1) {
+                debug.printChip8State(chip8) catch {};
+                chip8Logger.info("Breakpoint reaced: 0x{x:0>4} Press 'n' for get to next instruction \n", .{breakpoint});
+
+                var stdin_buffer: [1024]u8 = undefined;
+                var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+                _ = try stdin_reader.interface.takeDelimiterExclusive('\n');
+                switch (stdin_buffer[0]) {
+                    'n', 'N' => { // if n go to next instruction
+                        breakpoint += 2;
+                    },
+                    else => {
+                        // continue normally
+                    },
+                }
+            }
+
             step(chip8);
+            chip8.cycles += 1;
         }
 
         //Delay
@@ -115,32 +141,31 @@ fn handleInput(chip8: *Chip8) void {
     var e: sdl.SDL_Event = undefined;
     while (sdl.SDL_PollEvent(&e) != 0) {
         if (e.type == sdl.SDL_QUIT) {
-            std.debug.print("QUIT", .{});
             chip8.running = false;
             break;
         }
         if (e.type == sdl.SDL_KEYDOWN or e.type == sdl.SDL_KEYUP) {
             const pressed: u8 = if (e.type == sdl.SDL_KEYDOWN) 1 else 0;
             switch (e.key.keysym.sym) {
-                sdl.SDLK_1 => chip8.key[0x1] = pressed,
-                sdl.SDLK_2 => chip8.key[0x2] = pressed,
-                sdl.SDLK_3 => chip8.key[0x3] = pressed,
-                sdl.SDLK_4 => chip8.key[0xC] = pressed,
+                sdl.SDLK_1 => chip8.keys[0x1] = pressed,
+                sdl.SDLK_2 => chip8.keys[0x2] = pressed,
+                sdl.SDLK_3 => chip8.keys[0x3] = pressed,
+                sdl.SDLK_4 => chip8.keys[0xC] = pressed,
 
-                sdl.SDLK_q => chip8.key[0x4] = pressed,
-                sdl.SDLK_w => chip8.key[0x5] = pressed,
-                sdl.SDLK_e => chip8.key[0x6] = pressed,
-                sdl.SDLK_r => chip8.key[0xD] = pressed,
+                sdl.SDLK_q => chip8.keys[0x4] = pressed,
+                sdl.SDLK_w => chip8.keys[0x5] = pressed,
+                sdl.SDLK_e => chip8.keys[0x6] = pressed,
+                sdl.SDLK_r => chip8.keys[0xD] = pressed,
 
-                sdl.SDLK_a => chip8.key[0x7] = pressed,
-                sdl.SDLK_s => chip8.key[0x8] = pressed,
-                sdl.SDLK_d => chip8.key[0x9] = pressed,
-                sdl.SDLK_f => chip8.key[0xE] = pressed,
+                sdl.SDLK_a => chip8.keys[0x7] = pressed,
+                sdl.SDLK_s => chip8.keys[0x8] = pressed,
+                sdl.SDLK_d => chip8.keys[0x9] = pressed,
+                sdl.SDLK_f => chip8.keys[0xE] = pressed,
 
-                sdl.SDLK_z => chip8.key[0xA] = pressed,
-                sdl.SDLK_x => chip8.key[0x0] = pressed,
-                sdl.SDLK_c => chip8.key[0xB] = pressed,
-                sdl.SDLK_v => chip8.key[0xF] = pressed,
+                sdl.SDLK_z => chip8.keys[0xA] = pressed,
+                sdl.SDLK_x => chip8.keys[0x0] = pressed,
+                sdl.SDLK_c => chip8.keys[0xB] = pressed,
+                sdl.SDLK_v => chip8.keys[0xF] = pressed,
                 else => {},
             }
         }
@@ -171,10 +196,9 @@ fn draw(chip8: Chip8) void {
 fn step(chip8: *Chip8) void {
     chip8.opcode = fetch(chip8.*);
 
-    debug.printVRegisters(&chip8.V);
-    debug.printOtherRegisters(chip8.I, chip8.PC, chip8.SP);
-    debug.printInternalStatus(chip8.opcode, chip8.delayTimer, chip8.soundTimer, chip8.draw);
-    std.debug.print("Running: {}\n", .{chip8.running});
+    debug.printChip8State(chip8) catch {
+        chip8Logger.warn("Some error logging current state", .{});
+    };
 
     execute(chip8, chip8.opcode);
     chip8.PC += 2;
@@ -199,8 +223,7 @@ fn execute(chip8: *Chip8, opcode: u16) void {
                     chip8.PC -= 2; // Compense the +2 in the calling function
                 },
                 else => {
-                    std.debug.print("Unknown opcode: 0x{x:0>4}\n", .{opcode});
-                    chip8.running = false;
+                    unknowOpcode(chip8);
                 },
             }
         },
@@ -264,16 +287,19 @@ fn execute(chip8: *Chip8, opcode: u16) void {
                     const x = (chip8.opcode & 0x0F00) >> 8;
                     const y = (chip8.opcode & 0x00F0) >> 4;
                     chip8.V[x] |= chip8.V[y];
+                    chip8.V[0xF] = 0; // quirks 5
                 },
                 0x8002 => { // 0x8XY2 - AND Vx, Vy: Set Vx = Vx AND Vy
                     const x = (chip8.opcode & 0x0F00) >> 8;
                     const y = (chip8.opcode & 0x00F0) >> 4;
                     chip8.V[x] &= chip8.V[y];
+                    chip8.V[0xF] = 0; // quirks 5
                 },
                 0x8003 => { // 0x8XY3 - XOR Vx, Vy: Set Vx = Vx XOR Vy
                     const x = (chip8.opcode & 0x0F00) >> 8;
                     const y = (chip8.opcode & 0x00F0) >> 4;
                     chip8.V[x] ^= chip8.V[y];
+                    chip8.V[0xF] = 0; // quirks 5
                 },
                 0x8004 => { // 0x8XY4 - ADD Vx, Vy: Set Vx = Vx + Vy, set VF = carry
                     const x = (chip8.opcode & 0x0F00) >> 8;
@@ -323,8 +349,7 @@ fn execute(chip8: *Chip8, opcode: u16) void {
                     chip8.V[0xF] = carry;
                 },
                 else => {
-                    std.debug.print("Unknown opcode: 0x{x:0>4}\n", .{opcode});
-                    chip8.running = false;
+                    unknowOpcode(chip8);
                 },
             }
         },
@@ -340,22 +365,39 @@ fn execute(chip8: *Chip8, opcode: u16) void {
             const address = chip8.opcode & 0x0FFF;
             chip8.I = address;
         },
+        0xB000 => { // 0xBNNN Set the PC with V0 + NNN
+            const nnn = chip8.opcode & 0x0FFF;
+            chip8.PC = chip8.V[0] + nnn;
+        },
+        0xC000 => { // 0xCXNN Random number wrapped with nn
+            const nn: u8 = @intCast(chip8.opcode & 0x00FF);
+            const x = (chip8.opcode & 0x0F00) >> 8;
+            chip8.V[x] = std.crypto.random.int(u8) & nn;
+        },
         0xD000 => { // 0xDXYN - DRW Vx, Vy, nibble: Draw sprite at (Vx, Vy) with height N
             const witdh = 8;
             const height = chip8.opcode & 0x000F;
-            const x = chip8.V[(chip8.opcode & 0x0F00) >> 8];
-            const y = chip8.V[(chip8.opcode & 0x00F0) >> 4];
-            var yline: u16 = 0;
+
+            const x = chip8.V[(chip8.opcode & 0x0F00) >> 8] & 0x3F; // And with 63 for wrapping
+            const y = chip8.V[(chip8.opcode & 0x00F0) >> 4] & 0x1F; // And with 31 for wrapping
+
             chip8.V[0xF] = 0;
 
+            var yline: u16 = 0;
             while (yline < height) : (yline += 1) {
-                const pixel = chip8.memory[chip8.I + yline];
+                const pixels = chip8.memory[chip8.I + yline];
                 var xline: u16 = 0;
+
                 while (xline < witdh) : (xline += 1) {
-                    if ((pixel >> @intCast(7 - xline)) & 1 != 0) {
-                        if (chip8.gfx[(x + xline + ((y + yline) * 64))] == 1)
-                            chip8.V[0xF] = 1;
-                        chip8.gfx[x + xline + ((y + yline) * 64)] ^= 1;
+                    const px = x + xline;
+                    const py = y + yline;
+                    if ((pixels >> @intCast(7 - xline)) & 1 != 0) {
+                        if (px < 64 and py < 32) {
+                            const index = px + ((py) * 64);
+                            if (chip8.gfx[index] == 1)
+                                chip8.V[0xF] = 1;
+                            chip8.gfx[index] ^= 1; // Edit pixel
+                        }
                     }
                 }
             }
@@ -366,19 +408,18 @@ fn execute(chip8: *Chip8, opcode: u16) void {
             switch (opcode & 0xF0FF) {
                 0xE09E => { // 0xEX9E - SKP Vx: Skip next instruction if key with the value of Vx is pressed
                     const x = (chip8.opcode & 0x0F00) >> 8;
-                    if (chip8.key[chip8.V[x]] == 1) {
+                    if (chip8.keys[chip8.V[x]] == 1) {
                         chip8.PC += 2;
                     }
                 },
                 0xE0A1 => { // 0xEXA1 - SKNP Vx: Skip next instruction if key with the value of Vx is not pressed
                     const x = (chip8.opcode & 0x0F00) >> 8;
-                    if (chip8.key[chip8.V[x]] != 1) {
+                    if (chip8.keys[chip8.V[x]] != 1) {
                         chip8.PC += 2;
                     }
                 },
                 else => {
-                    std.debug.print("Unknown opcode: 0x{x:0>4}\n", .{opcode});
-                    chip8.running = false;
+                    unknowOpcode(chip8);
                 },
             }
         },
@@ -388,12 +429,27 @@ fn execute(chip8: *Chip8, opcode: u16) void {
                     const x = (chip8.opcode & 0x0F00) >> 8;
                     chip8.V[x] = chip8.delayTimer;
                 },
-                // 0xF00A => {} // 0xFX0A - LD Vx, K: Wait for a key press, store the value of the key in Vx
+                0xF00A => { // 0xFX0A - LD Vx, K: Wait for a key press, store the value of the key in Vx
+                    var i: u8 = 0;
+                    var founded: bool = false;
+                    while (i < 16 and !founded) : (i += 1) {
+                        if (chip8.keys[i] == 1) {
+                            chip8.V[0x0] = i;
+                            founded = true;
+                        }
+                    }
+                    if (!founded) {
+                        chip8.PC -= 2;
+                    }
+                },
                 0xF015 => { // 0xFX15 - LD DT, Vx: Set delay timer = Vx
                     const x = (chip8.opcode & 0x0F00) >> 8;
                     chip8.delayTimer = chip8.V[x];
                 },
-                // 0xF018 => {} // 0xFX18 - LD ST, Vx: Set sound timer = Vx
+                0xF018 => { // 0xFX18 Set delay timer
+                    const x = (chip8.opcode & 0x0F00) >> 8;
+                    chip8.soundTimer = chip8.V[x];
+                }, // 0xFX18 - LD ST, Vx: Set sound timer = Vx
                 0xF01E => { // 0xFX1E - ADD I, Vx: Set I = I + Vx
                     const reg = (chip8.opcode & 0x0F00) >> 8;
                     const old_i: u16 = chip8.I;
@@ -401,7 +457,10 @@ fn execute(chip8: *Chip8, opcode: u16) void {
 
                     chip8.I = old_i + value;
                 },
-                // 0xF029 => {} // 0xFX29 - LD F, Vx: Set I = location of sprite for digit Vx
+                0xF029 => { // 0xFX29 - LD F, Vx: Set I = location of letter for digit Vx
+                    const x = (chip8.opcode & 0x0F00) >> 8;
+                    chip8.I = chip8.V[x] * 5;
+                },
                 0xF033 => { // 0xFX33 - LD B, Vx: Store BCD representation of Vx in memory at I, I+1, I+2
                     const reg_target = (chip8.opcode & 0x0F00) >> 8;
                     const value_bcd = chip8.V[reg_target];
@@ -420,10 +479,6 @@ fn execute(chip8: *Chip8, opcode: u16) void {
 
                     while (i <= x) : (i += 1) {
                         chip8.memory[chip8.I + i] = @intCast(chip8.V[i]);
-                        std.debug.print(
-                            "  mem[0x{x:0>3}+{d}] = 0x{x:0>3}\n",
-                            .{ chip8.I, i, chip8.memory[chip8.I + i] },
-                        );
                     }
                     chip8.I += (x + 1);
                 },
@@ -433,23 +488,22 @@ fn execute(chip8: *Chip8, opcode: u16) void {
 
                     while (i <= x) : (i += 1) {
                         chip8.V[i] = chip8.memory[chip8.I + i];
-                        std.debug.print(
-                            "  V{d} = 0x{x:0>3}\n",
-                            .{ i, chip8.V[i] },
-                        );
                     }
 
                     chip8.I += (x + 1);
                 },
                 else => {
-                    std.debug.print("Unknown opcode: 0x{x:0>4}\n", .{opcode});
-                    chip8.running = false;
+                    unknowOpcode(chip8);
                 },
             }
         },
         else => {
-            std.debug.print("Unknown opcode: 0x{x:0>4}\n", .{opcode});
-            chip8.running = false;
+            unknowOpcode(chip8);
         },
     }
+}
+
+fn unknowOpcode(chip8: *Chip8) void {
+    chip8Logger.err("Unknown opcode: 0x{x:0>4}\n", .{chip8.opcode});
+    chip8.running = false;
 }

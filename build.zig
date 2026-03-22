@@ -11,11 +11,20 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const logging_mod = b.addModule("logging", .{
+        .root_source_file = b.path("src/logging.zig"),
+        .target = target,
+    });
+
     const chip8_mod = b.addModule("chip_8", .{
         .root_source_file = b.path("src/chip8.zig"),
         .target = target,
-        .imports = &.{.{ .name = "sdl", .module = sdl_mod }},
+        .imports = &.{ .{ .name = "sdl", .module = sdl_mod }, .{ .name = "logging", .module = logging_mod } },
     });
+
+    const debug_mod = b.addModule("logging", .{ .root_source_file = b.path("src/logging.zig"), .target = target, .imports = &.{
+        .{ .name = "chip_8", .module = chip8_mod },
+    } });
 
     const exe = b.addExecutable(.{
         .name = "chip_8",
@@ -23,9 +32,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{
-                .{ .name = "chip_8", .module = chip8_mod }, .{ .name = "sdl", .module = sdl_mod },
-            },
+            .imports = &.{ .{ .name = "chip_8", .module = chip8_mod }, .{ .name = "sdl", .module = sdl_mod }, .{ .name = "logging", .module = logging_mod }, .{ .name = "debug", .module = debug_mod } },
         }),
     });
 
