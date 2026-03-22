@@ -25,20 +25,12 @@ help:
 
 # Default: build debug
 [group('build')]
-build: zig-build
+build:
     @{{ ECHO_CMD }} "{{ GREEN }}[+] Build complete (debug)!{{ RESET }}"
-
-[group('build')]
-zig-build:
-    @echo -e "{{ CYAN }}[*] Building (debug) with {{ ZIG }}...{{ RESET }}"
-    @{{ MKDIR_CMD }} {{ BIN_DIR }}
-    @{{ ZIG }} build
-    @cp zig-out/bin/{{ EXEC_NAME }} {{ BIN_DIR }}{{ PATHSEP }}{{ EXEC_NAME }} || true
-    @{{ ECHO_CMD }} "{{ GREEN }}[+] Zig debug build finished. Binary (if produced) copied to {{ BIN_DIR }}{{ PATHSEP }}{{ EXEC_NAME }}{{ RESET }}"
 
 # Build release (optimized)
 [group('build')]
-zig-build-release:
+build-release:
     @echo -e "{{ CYAN }}[*] Building (release) with {{ ZIG }}...{{ RESET }}"
     @{{ MKDIR_CMD }} {{ BIN_DIR }}
     @{{ ZIG }} build -Doptimize=ReleaseFast
@@ -47,13 +39,13 @@ zig-build-release:
 
 # Run the built executable (debug)
 [group('dev')]
-run ROM: zig-build
+run ROM: build
     @echo -e "{{ CYAN }}[*] Running {{ EXEC_NAME }}...{{ RESET }}"
     @zig-out/bin/{{ EXEC_NAME }} {{ ROM }}
 
 # Run the release binary if you prefer
 [group('dev')]
-run-release ROM: zig-build-release
+run-release ROM: build-release
     @echo -e "{{ CYAN }}[*] Running {{ EXEC_NAME }} (release)...{{ RESET }}"
     @{{ BIN_DIR }}{{ PATHSEP }}{{ EXEC_NAME }} {{ ROM }}
 
@@ -83,7 +75,7 @@ clean:
     @{{ ECHO_CMD }} "{{ GREEN }}[+] Clean complete!{{ RESET }}"
 
 [group('dev')]
-install: zig-build-release
+install: build-release
     @echo -e "{{ CYAN }}[*] Installing binary to /usr/local/bin...{{ RESET }}"
     @sudo cp {{ BIN_DIR }}{{ PATHSEP }}{{ EXEC_NAME }} /usr/local/bin/{{ EXEC_NAME }}
     @{{ ECHO_CMD }} "{{ GREEN }}[+] Install complete!{{ RESET }}"
