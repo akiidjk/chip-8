@@ -113,28 +113,58 @@ fn getRom(allocator: std.mem.Allocator, romPath: [*:0]u8) ![]u8 {
     return romSlice;
 }
 
+fn printHelp() void {
+    log.info("Usage: ./chip8 <rom> <address for breakpoint (optional)>", .{});
+}
+
+fn argsHandling(allocator: std.mem.Allocator, argv: [][*:0]u8) !struct { romSlice: []u8, breakpoint: i32 } {
+    if (argv.len < 2) {
+        log.err("You need to insert at least the rom to execute\n", .{});
+        printHelp();
+        std.process.exit(1);
+    }
+
+    for (argv) |arg| {
+        if (std.mem.eql(u8, std.mem.span(arg), "--help")) {
+            printHelp();
+            std.process.exit(0);
+        }
+    }
+
+    const romPath = argv[1];
+    log.info("Rom selected {s}\n", .{romPath});
+    const romSlice = getRom(allocator, romPath) catch {
+        log.err("Failed to read rom\n", .{});
+        std.process.exit(1);
+    };
+
+    var breakpoint: i32 = -1;
+    if (argv.len > 2) {
+        const bp_str = argv[2];
+        breakpoint = std.fmt.parseInt(i32, std.mem.span(bp_str), 16) catch |e| {
+            log.err("Invalid breakpoint: {s} with error {} remember to use base 16 without 0x\n", .{ bp_str, e });
+            std.process.exit(1);
+        };
+    }
+
+    return .{ .romSlice = romSlice, .breakpoint = breakpoint };
+}
+
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    if (std.os.argv.len < 2) {
-        log.err("You need to insert at least the rom to execute\n", .{});
-        return;
-    }
-
-    const romPath = std.os.argv[1];
-    log.info("Rom selected {s}\n", .{romPath});
-
-    const romSlice = try getRom(allocator, romPath);
-    defer allocator.free(romSlice);
+    const result = try argsHandling(allocator, std.os.argv);
+    defer allocator.free(result.romSlice);
 
     const window, const renderer = initSDL();
     defer closeSDL(window, renderer);
 
     setupSigint();
     var chip8Istance = chip8.init(
-        romSlice,
+        result.romSlice,
         renderer,
     );
+    chip8Istance.breakpoint = result.breakpoint;
 
     audioInit(&chip8Istance);
 
