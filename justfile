@@ -27,6 +27,9 @@ help:
 [group('build')]
 build:
     @{{ ECHO_CMD }} "{{ GREEN }}[+] Build complete (debug)!{{ RESET }}"
+    zig build
+    @cp zig-out/bin/{{ EXEC_NAME }} {{ BIN_DIR }}{{ PATHSEP }}{{ EXEC_NAME }} || true
+    @{{ ECHO_CMD }} "{{ GREEN }}[+] Debug build finished. Binary (if produced) copied to {{ BIN_DIR }}{{ PATHSEP }}{{ EXEC_NAME }}{{ RESET }}"
 
 # Build release (optimized)
 [group('build')]
